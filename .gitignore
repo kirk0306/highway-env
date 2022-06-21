@@ -14,10 +14,13 @@ _build
 
 # Editor files
 .idea
+highway_ppo
 
 # Test files
 .pytest_cache
 .cache
+.json
+.vscode
 
 # Outputs
 **/out/*

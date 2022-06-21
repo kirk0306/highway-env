@@ -77,16 +77,21 @@ class MergeEnv(AbstractEnv):
         net = RoadNetwork()
 
         # Highway lanes
+        num_highway = 2
         ends = [150, 80, 80, 150]  # Before, converging, merge, after
         c, s, n = LineType.CONTINUOUS_LINE, LineType.STRIPED, LineType.NONE
         y = [0, StraightLane.DEFAULT_WIDTH]
         line_type = [[c, s], [n, c]]
         line_type_merge = [[c, s], [n, s]]
-        for i in range(2):
+        for i in range(num_highway):
             net.add_lane("a", "b", StraightLane([0, y[i]], [sum(ends[:2]), y[i]], line_types=line_type[i]))
             net.add_lane("b", "c", StraightLane([sum(ends[:2]), y[i]], [sum(ends[:3]), y[i]], line_types=line_type_merge[i]))
             net.add_lane("c", "d", StraightLane([sum(ends[:3]), y[i]], [sum(ends), y[i]], line_types=line_type[i]))
-
+        # Highway lanes mirro    
+        for i in range(num_highway):
+            net.add_lane("d", "cc", StraightLane([sum(ends), y[i]], [2*sum(ends)-sum(ends[:3]), y[i]], line_types=line_type[i]))
+            net.add_lane("cc", "bb", StraightLane([2*sum(ends)-sum(ends[:3]), y[i]], [2*sum(ends)-sum(ends[:2]), y[i]], line_types=line_type_merge[i]))
+            net.add_lane("bb", "aa", StraightLane([2*sum(ends)-sum(ends[:2]), y[i]], [2*sum(ends), y[i]], line_types=line_type[i]))
         # Merging lane
         amplitude = 3.25
         ljk = StraightLane([0, 6.5 + 4 + 4], [ends[0], 6.5 + 4 + 4], line_types=[c, c], forbidden=True)
@@ -97,6 +102,15 @@ class MergeEnv(AbstractEnv):
         net.add_lane("j", "k", ljk)
         net.add_lane("k", "b", lkb)
         net.add_lane("b", "c", lbc)
+        #  # Merging lane  mirro
+        ljjkk = StraightLane([2*sum(ends), 6.5 + 4 + 4], [2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4], line_types=[c, c], forbidden=True)
+        lkkbb = SineLane(ljjkk.position(ends[0], amplitude), ljjkk.position(sum(ends[:2]), amplitude),
+                       amplitude, 2 * np.pi / (2*ends[1]), -np.pi / 2, line_types=[c, c], forbidden=True)
+        lbbcc = StraightLane(lkkbb.position(ends[1], 0), lkkbb.position(ends[1], 0) - [ends[2], 0],
+                           line_types=[c, n], forbidden=True)
+        net.add_lane("jj", "kk", ljjkk)
+        net.add_lane("kk", "bb", lkkbb)
+        net.add_lane("bb", "cc", lbbcc)
         road = Road(network=net, np_random=self.np_random, record_history=self.config["show_trajectories"])
         road.objects.append(Obstacle(road, lbc.position(ends[2], 0)))
         self.road = road

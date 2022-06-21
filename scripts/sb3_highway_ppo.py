@@ -17,7 +17,7 @@ import highway_env
 # ==================================
 
 if __name__ == "__main__":
-    train = True
+    train = False
     if train:
         n_cpu = 6
         batch_size = 64
@@ -37,8 +37,10 @@ if __name__ == "__main__":
         # Save the agent
         model.save("highway_ppo/model")
 
-    model = PPO.load("highway_ppo/model")
+    model = PPO.load("/content/drive/MyDrive/researchHub/highway-env/highway_ppo/model")
     env = gym.make("highway-fast-v0")
+    env.configure({"offscreen_rendering": True})
+    img = env.render(mode='rgb_array')
     for _ in range(5):
         obs = env.reset()
         done = False
