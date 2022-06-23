@@ -1,8 +1,10 @@
+from typing import Dict, Tuple
+
 import numpy as np
 from gym.envs.registration import register
 
 from highway_env import utils
-from highway_env.envs.common.abstract import AbstractEnv
+from highway_env.envs.common.abstract import AbstractEnv, MultiAgentWrapper
 from highway_env.road.lane import LineType, StraightLane, SineLane
 from highway_env.road.road import Road, RoadNetwork
 from highway_env.vehicle.controller import ControlledVehicle
@@ -18,18 +20,53 @@ class MergeEnv(AbstractEnv):
     It is rewarded for maintaining a high speed and avoiding collisions, but also making room for merging
     vehicles.
     """
+    ACTIONS: Dict[int, str] = {
+        0: 'SLOWER',
+        1: 'IDLE',
+        2: 'FASTER'
+    }
+    ACTIONS_INDEXES = {v: k for k, v in ACTIONS.items()}
 
     @classmethod
     def default_config(cls) -> dict:
-        cfg = super().default_config()
-        cfg.update({
+        config = super().default_config()
+        config.update({
+            "observation": {
+                "type": "Kinematics",
+                "vehicles_count": 15,
+                "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
+                "features_range": {
+                    "x": [-100, 100],
+                    "y": [-100, 100],
+                    "vx": [-20, 20],
+                    "vy": [-20, 20],
+                },
+                "absolute": True,
+                "flatten": False,
+                "observe_intentions": False
+            },
+            "action": {
+                "type": "DiscreteMetaAction",
+                "longitudinal": True,
+                "lateral": False,
+                "target_speeds": [0, 4.5, 9]
+            },
+            "duration": 13,  # [s]
+            "destination": "o1",
+            "controlled_vehicles": 1,
+            "initial_vehicle_count": 10,
+            "spawn_probability": 0.6,
+            "screen_width": 600,
+            "screen_height": 600,
+            "centering_position": [0.5, 0.6],
+            "scaling": 5.5 * 1.3,
             "collision_reward": -1,
             "right_lane_reward": 0.1,
             "high_speed_reward": 0.2,
             "merging_speed_reward": -0.5,
             "lane_change_reward": -0.05,
         })
-        return cfg
+        return config
 
     def _reward(self, action: int) -> float:
         """
@@ -103,14 +140,16 @@ class MergeEnv(AbstractEnv):
         net.add_lane("k", "b", lkb)
         net.add_lane("b", "c", lbc)
         #  # Merging lane  mirro
-        ljjkk = StraightLane([2*sum(ends), 6.5 + 4 + 4], [2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4], line_types=[c, c], forbidden=True)
-        lkkbb = SineLane(ljjkk.position(ends[0], amplitude), ljjkk.position(sum(ends[:2]), amplitude),
+        lkkjj = StraightLane([2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4], [2*sum(ends), 6.5 + 4 + 4], line_types=[c, c], forbidden=True)
+        lccbb = StraightLane([2*sum(ends)-sum(ends[:3]), 8], [2*sum(ends)-sum(ends[:2]), 8],
+                            line_types=[n, c], forbidden=True)
+        
+        lbbkk = SineLane([2*sum(ends)-sum(ends[:2]), 6.5 + 4 + 4 -amplitude], [2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4 -amplitude],
                        amplitude, 2 * np.pi / (2*ends[1]), -np.pi / 2, line_types=[c, c], forbidden=True)
-        lbbcc = StraightLane(lkkbb.position(ends[1], 0), lkkbb.position(ends[1], 0) - [ends[2], 0],
-                           line_types=[c, n], forbidden=True)
-        net.add_lane("jj", "kk", ljjkk)
-        net.add_lane("kk", "bb", lkkbb)
-        net.add_lane("bb", "cc", lbbcc)
+
+        net.add_lane("kk", "jj", lkkjj)
+        net.add_lane("bb", "kk", lbbkk)
+        net.add_lane("cc", "bb", lccbb)
         road = Road(network=net, np_random=self.np_random, record_history=self.config["show_trajectories"])
         road.objects.append(Obstacle(road, lbc.position(ends[2], 0)))
         self.road = road
@@ -136,6 +175,52 @@ class MergeEnv(AbstractEnv):
         merging_v.target_speed = 30
         road.vehicles.append(merging_v)
         self.vehicle = ego_vehicle
+
+
+class MultiAgentMergeEnv(MergeEnv):
+    @classmethod
+    def default_config(cls) -> dict:
+        config = super().default_config()
+        config.update({
+            "action": {
+                 "type": "MultiAgentAction",
+                 "action_config": {
+                     "type": "DiscreteMetaAction",
+                     "lateral": False,
+                     "longitudinal": True
+                 }
+            },
+            "observation": {
+                "type": "MultiAgentObservation",
+                "observation_config": {
+                    "type": "Kinematics"
+                }
+            },
+            "controlled_vehicles": 2
+        })
+        return config
+
+class ContinuousMergeEnv(MergeEnv):
+    @classmethod
+    def default_config(cls) -> dict:
+        config = super().default_config()
+        config.update({
+            "observation": {
+                "type": "Kinematics",
+                "vehicles_count": 5,
+                "features": ["presence", "x", "y", "vx", "vy", "long_off", "lat_off", "ang_off"],
+            },
+            "action": {
+                "type": "ContinuousAction",
+                "steering_range": [-np.pi / 3, np.pi / 3],
+                "longitudinal": True,
+                "lateral": True,
+                "dynamical": True
+            },
+        })
+        return config
+
+TupleMultiAgentMergeEnv = MultiAgentWrapper(MultiAgentMergeEnv)
 
 
 register(
