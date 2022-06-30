@@ -21,6 +21,7 @@ highway_ppo
 .cache
 .json
 .vscode
+.ipynb
 
 # Outputs
 **/out/*

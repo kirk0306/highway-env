@@ -4,12 +4,14 @@ import numpy as np
 from gym.envs.registration import register
 
 from highway_env import utils
-from highway_env.envs.common.abstract import AbstractEnv, MultiAgentWrapper
+from highway_env.envs.common.abstract import AbstractEnv
+from highway_env.envs.common.observation import MultiAgentObservation, observation_factory
 from highway_env.road.lane import LineType, StraightLane, SineLane
 from highway_env.road.road import Road, RoadNetwork
 from highway_env.vehicle.controller import ControlledVehicle
 from highway_env.vehicle.objects import Obstacle
-
+import random
+import pprint
 
 class MergeEnv(AbstractEnv):
 
@@ -20,55 +22,76 @@ class MergeEnv(AbstractEnv):
     It is rewarded for maintaining a high speed and avoiding collisions, but also making room for merging
     vehicles.
     """
-    ACTIONS: Dict[int, str] = {
-        0: 'SLOWER',
-        1: 'IDLE',
-        2: 'FASTER'
-    }
-    ACTIONS_INDEXES = {v: k for k, v in ACTIONS.items()}
+    GLO_OBS =  {"observation": {"type": "MultiAgentObservation",
+                "observation_config": {
+                    "type": "Kinematics",
+                    "vehicles_count": 5,
+                    "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
+                    "features_range": {
+                        "x": [-100, 100],
+                        "y": [-100, 100],
+                        "vx": [-20, 20],
+                        "vy": [-20, 20],
+                    },
+                    "absolute": True,
+
+                },}}
+
+    def __init__(self, cfg: dict = None) -> None:
+        super().__init__(cfg)
+        self.observation_type_global = None
 
     @classmethod
     def default_config(cls) -> dict:
-        config = super().default_config()
-        config.update({
-            "observation": {
-                "type": "Kinematics",
-                "vehicles_count": 15,
-                "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
-                "features_range": {
-                    "x": [-100, 100],
-                    "y": [-100, 100],
-                    "vx": [-20, 20],
-                    "vy": [-20, 20],
-                },
-                "absolute": True,
-                "flatten": False,
-                "observe_intentions": False
-            },
-            "action": {
-                "type": "DiscreteMetaAction",
-                "longitudinal": True,
-                "lateral": False,
-                "target_speeds": [0, 4.5, 9]
-            },
-            "duration": 13,  # [s]
-            "destination": "o1",
-            "controlled_vehicles": 1,
-            "initial_vehicle_count": 10,
-            "spawn_probability": 0.6,
-            "screen_width": 600,
-            "screen_height": 600,
-            "centering_position": [0.5, 0.6],
-            "scaling": 5.5 * 1.3,
+        cfg = super().default_config()
+        cfg.update({
             "collision_reward": -1,
             "right_lane_reward": 0.1,
             "high_speed_reward": 0.2,
             "merging_speed_reward": -0.5,
             "lane_change_reward": -0.05,
+            "action": {
+                "type": "MultiAgentAction",
+                "action_config": {
+                    "type": "DiscreteMetaAction",
+                    "lateral": True,
+                    "longitudinal": True
+                }},
+            "observation": { "type": "MultiAgentObservation",
+                "observation_config": {
+                    "type": "Kinematics",
+                    "vehicles_count": 5,
+                    "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
+                    "features_range": {
+                        "x": [-100, 100],
+                        "y": [-100, 100],
+                        "vx": [-20, 20],
+                        "vy": [-20, 20],
+                    },
+                    "absolute": False,
+                    "flatten": False,
+                    "observe_intentions": False,
+                    "normalize": False
+                },
+            },
+            "controlled_vehicles": 1,
         })
-        return config
+        return cfg
+
+    def define_spaces(self) -> None:
+        """
+        Set the types and spaces of observation and action from config.
+        """
+        super().define_spaces()
+        self.observation_type_global = observation_factory(self, self.GLO_OBS["observation"])
 
     def _reward(self, action: int) -> float:
+        rew = []
+        for v,a in zip(self.controlled_vehicles, action):
+            rew.append(self.agent_reward(a, v))
+        return rew
+
+    def agent_reward(self, action: int, cur_vehicle) -> float:
         """
         The vehicle is rewarded for driving with high speed on lanes to the right and avoiding collisions
 
@@ -82,28 +105,90 @@ class MergeEnv(AbstractEnv):
                          2: self.config["lane_change_reward"],
                          3: 0,
                          4: 0}
-        reward = self.config["collision_reward"] * self.vehicle.crashed \
-            + self.config["right_lane_reward"] * self.vehicle.lane_index[2] / 1 \
-            + self.config["high_speed_reward"] * self.vehicle.speed_index / (self.vehicle.target_speeds.size - 1)
-
+        reward = self.config["collision_reward"] * cur_vehicle.crashed \
+            + self.has_arrived(cur_vehicle) * 5 \
+            + self.config["right_lane_reward"] * cur_vehicle.lane_index[2] / 1 \
+            + self.config["high_speed_reward"] * cur_vehicle.speed_index / (cur_vehicle.target_speeds.size - 1)
+        # print(self.vehicle.lane_index)
         # Altruistic penalty
-        for vehicle in self.road.vehicles:
-            if vehicle.lane_index == ("b", "c", 2) and isinstance(vehicle, ControlledVehicle):
-                reward += self.config["merging_speed_reward"] * \
-                          (vehicle.target_speed - vehicle.speed) / vehicle.target_speed
-
+        if cur_vehicle.lane_index == ("b", "c", 2):
+            reward += self.config["merging_speed_reward"] * \
+                        (cur_vehicle.target_speed - cur_vehicle.speed) / cur_vehicle.target_speed
+        # print(reward)
+        # return reward
         return utils.lmap(action_reward[action] + reward,
                           [self.config["collision_reward"] + self.config["merging_speed_reward"],
                            self.config["high_speed_reward"] + self.config["right_lane_reward"]],
                           [0, 1])
 
+    def has_arrived(self, vehicle):
+        if vehicle.lane_index[1] == 'jj':
+            # print('arrive jj')
+            return 1
+        else:
+            return 0
+        
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
+        obs, reward, done, info = super().step(action)
+        _rel = np.array(obs)
+        _relx = _rel[..., 1]
+        _rely = _rel[..., 2]
+        print('feature x: ')
+        pprint.pprint(_relx)
+        print('feature y: ')
+        pprint.pprint(_rely)
+        print('feature egoabscos_h: ')
+        pprint.pprint(_rel[:, 0, 5])
+        print('feature rel: ')
+        pprint.pprint(_rel)
+        obs = self.observation_type_global.observe()
+        pprint.pprint(np.array(obs))
+        obs, reward, done, info = super().step(action)
+
+
+        for v in self.road.vehicles:
+            if self._agent_is_terminal(v):
+                try:
+                    self.road.vehicles.remove(v)
+                except:
+                    pass
+        # for v in self.road.vehicles:
+        #     if not v.crashed:
+        #         if v.position[0]>920:
+        #             v.position[0] = 0
+        #             lane_index = self.road.network.get_closest_lane_index(v.position)
+        #             lane = self.road.network.get_lane(lane_index)
+        #             v.lane = lane
+        #             v.lane_index = lane_index
+        #             v.target_lane_index = lane_index
+        return obs, reward, done, info
+
+    # def _get_local_obs(self, obs: np.ndarray):
+    #     """
+    #     when absolute = True, this obs is global
+    #     :return: closest distance to the world edge = (x, y)
+    #     """
+    #     dim_local_o = 2
+    #     world_size = 1
+    #     local_obs = np.zeros(dim_local_o)
+    #     wall_dists = np.array([[world_size - obs[1], world_size - obs[2]],
+    #                            [obs[1], obs[2]]])  
+    #     # wall_angles = np.array([0, np.pi / 2, np.pi, 3 / 2 * np.pi]) - obs[4]
+    #     closest_wall = np.argmin(wall_dists, axis =  1)
+    #     local_obs[0] = wall_dists[closest_wall][0]
+    #     local_obs[1] = wall_dists[closest_wall][1]
+    #     return local_obs
+
+    def _agent_is_terminal(self, vehicle):
+        return vehicle.crashed or vehicle.position[0] > 900 or self.has_arrived(vehicle)
+
     def _is_terminal(self) -> bool:
         """The episode is over when a collision occurs or when the access ramp has been passed."""
-        return self.vehicle.crashed or bool(self.vehicle.position[0] > 370)
+        return [vehicle.crashed or vehicle.position[0] > 900 or self.has_arrived(vehicle) for vehicle in self.controlled_vehicles]
 
     def _reset(self) -> None:
         self._make_road()
-        self._make_vehicles()
+        self._make_vehicles(self.config['controlled_vehicles'])
 
     def _make_road(self) -> None:
         """
@@ -140,12 +225,12 @@ class MergeEnv(AbstractEnv):
         net.add_lane("k", "b", lkb)
         net.add_lane("b", "c", lbc)
         #  # Merging lane  mirro
-        lkkjj = StraightLane([2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4], [2*sum(ends), 6.5 + 4 + 4], line_types=[c, c], forbidden=True)
+        lkkjj = StraightLane([2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4], [2*sum(ends), 6.5 + 4 + 4], line_types=[c, c], forbidden=False)
         lccbb = StraightLane([2*sum(ends)-sum(ends[:3]), 8], [2*sum(ends)-sum(ends[:2]), 8],
-                            line_types=[n, c], forbidden=True)
+                            line_types=[n, c], forbidden=False)
         
         lbbkk = SineLane([2*sum(ends)-sum(ends[:2]), 6.5 + 4 + 4 -amplitude], [2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4 -amplitude],
-                       amplitude, 2 * np.pi / (2*ends[1]), -np.pi / 2, line_types=[c, c], forbidden=True)
+                       amplitude, 2 * np.pi / (2*ends[1]), -np.pi / 2, line_types=[c, c], forbidden=False)
 
         net.add_lane("kk", "jj", lkkjj)
         net.add_lane("bb", "kk", lbbkk)
@@ -154,18 +239,88 @@ class MergeEnv(AbstractEnv):
         road.objects.append(Obstacle(road, lbc.position(ends[2], 0)))
         self.road = road
 
-    def _make_vehicles(self) -> None:
+    def _make_vehicles(self, num_CAV=4, num_HDV=6) -> None:
+        """
+        Populate a road with several vehicles on the highway and on the merging lane, as well as an ego-vehicle.
+        :return: the ego-vehicle
+        """
+        road = self.road
+        other_vehicles_type = utils.class_from_path(self.config["other_vehicles_type"])
+        self.controlled_vehicles = []
+
+        spawn_points_s = [10, 50, 90, 130, 170, 210]
+        spawn_points_m = [5, 45, 85, 125, 165, 205]
+
+        """Spawn points for CAV"""
+        # spawn point indexes on the straight road
+        spawn_point_s_c = np.random.choice(spawn_points_s, num_CAV // 2, replace=False)
+        # spawn point indexes on the merging road
+        spawn_point_m_c = np.random.choice(spawn_points_m, num_CAV - num_CAV // 2,
+                                           replace=False)
+        spawn_point_s_c = list(spawn_point_s_c)
+        spawn_point_m_c = list(spawn_point_m_c)
+        # remove the points to avoid duplicate
+        for a in spawn_point_s_c:
+            spawn_points_s.remove(a)
+        for b in spawn_point_m_c:
+            spawn_points_m.remove(b)
+
+        """Spawn points for HDV"""
+        # spawn point indexes on the straight road
+        spawn_point_s_h = np.random.choice(spawn_points_s, num_HDV // 2, replace=False)
+        # spawn point indexes on the merging road
+        spawn_point_m_h = np.random.choice(spawn_points_m, num_HDV - num_HDV // 2,
+                                           replace=False)
+        spawn_point_s_h = list(spawn_point_s_h)
+        spawn_point_m_h = list(spawn_point_m_h)
+
+        # initial speed with noise and location noise
+        initial_speed = np.random.rand(num_CAV + num_HDV) * 2 + 25  # range from [25, 27]
+        loc_noise = np.random.rand(num_CAV + num_HDV) * 3 - 1.5  # range from [-1.5, 1.5]
+        initial_speed = list(initial_speed)
+        loc_noise = list(loc_noise)
+
+        """spawn the CAV on the straight road first"""
+        for _ in range(num_CAV // 2):
+            ego_vehicle = self.action_type.vehicle_class(road, road.network.get_lane(("a", "b", 0)).position(
+                spawn_point_s_c.pop(0) + loc_noise.pop(0), 0), speed=initial_speed.pop(0))
+            self.controlled_vehicles.append(ego_vehicle)
+            road.vehicles.append(ego_vehicle)
+        """spawn the rest CAV on the merging road"""
+        for _ in range(num_CAV - num_CAV // 2):
+            ego_vehicle = self.action_type.vehicle_class(road, road.network.get_lane(("j", "k", 0)).position(
+                spawn_point_m_c.pop(0) + loc_noise.pop(0), 0), speed=initial_speed.pop(0))
+            self.controlled_vehicles.append(ego_vehicle)
+            road.vehicles.append(ego_vehicle)
+
+        """spawn the HDV on the main road first"""
+        for _ in range(num_HDV // 2):
+            road.vehicles.append(
+                other_vehicles_type(road, road.network.get_lane(("a", "b", 0)).position(
+                    spawn_point_s_h.pop(0) + loc_noise.pop(0), 0),
+                                    speed=initial_speed.pop(0)))
+
+        """spawn the rest HDV on the merging road"""
+        for _ in range(num_HDV - num_HDV // 2):
+            road.vehicles.append(
+                other_vehicles_type(road, road.network.get_lane(("j", "k", 0)).position(
+                    spawn_point_m_h.pop(0) + loc_noise.pop(0), 0),
+                                    speed=initial_speed.pop(0)))
+
+    def _make_vehicles2(self) -> None:
         """
         Populate a road with several vehicles on the highway and on the merging lane, as well as an ego-vehicle.
 
         :return: the ego-vehicle
         """
         road = self.road
-        ego_vehicle = self.action_type.vehicle_class(road,
-                                                     road.network.get_lane(("a", "b", 1)).position(30, 0),
-                                                     speed=30)
-        road.vehicles.append(ego_vehicle)
-
+        self.controlled_vehicles = []
+        for i in range(self.config['controlled_vehicles']):
+            ego_vehicle = self.action_type.vehicle_class(road,
+                                                        road.network.get_lane(("a", "b", random.randint(0,1))).position(random.randint(0,200), 0),
+                                                        speed=30)
+            road.vehicles.append(ego_vehicle)
+            self.controlled_vehicles.append(ego_vehicle)
         other_vehicles_type = utils.class_from_path(self.config["other_vehicles_type"])
         road.vehicles.append(other_vehicles_type(road, road.network.get_lane(("a", "b", 0)).position(90, 0), speed=29))
         road.vehicles.append(other_vehicles_type(road, road.network.get_lane(("a", "b", 1)).position(70, 0), speed=31))
@@ -174,56 +329,12 @@ class MergeEnv(AbstractEnv):
         merging_v = other_vehicles_type(road, road.network.get_lane(("j", "k", 0)).position(110, 0), speed=20)
         merging_v.target_speed = 30
         road.vehicles.append(merging_v)
-        self.vehicle = ego_vehicle
-
-
-class MultiAgentMergeEnv(MergeEnv):
-    @classmethod
-    def default_config(cls) -> dict:
-        config = super().default_config()
-        config.update({
-            "action": {
-                 "type": "MultiAgentAction",
-                 "action_config": {
-                     "type": "DiscreteMetaAction",
-                     "lateral": False,
-                     "longitudinal": True
-                 }
-            },
-            "observation": {
-                "type": "MultiAgentObservation",
-                "observation_config": {
-                    "type": "Kinematics"
-                }
-            },
-            "controlled_vehicles": 2
-        })
-        return config
-
-class ContinuousMergeEnv(MergeEnv):
-    @classmethod
-    def default_config(cls) -> dict:
-        config = super().default_config()
-        config.update({
-            "observation": {
-                "type": "Kinematics",
-                "vehicles_count": 5,
-                "features": ["presence", "x", "y", "vx", "vy", "long_off", "lat_off", "ang_off"],
-            },
-            "action": {
-                "type": "ContinuousAction",
-                "steering_range": [-np.pi / 3, np.pi / 3],
-                "longitudinal": True,
-                "lateral": True,
-                "dynamical": True
-            },
-        })
-        return config
-
-TupleMultiAgentMergeEnv = MultiAgentWrapper(MultiAgentMergeEnv)
+        # self.vehicle = ego_vehicle
 
 
 register(
     id='merge-v0',
     entry_point='highway_env.envs:MergeEnv',
 )
+
+    
