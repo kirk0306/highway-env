@@ -34,6 +34,9 @@ class MergeEnv(AbstractEnv):
                         "vy": [-20, 20],
                     },
                     "absolute": True,
+                    "flatten": False,
+                    "observe_intentions": False,
+                    "normalize": False
 
                 },}}
 
@@ -45,6 +48,7 @@ class MergeEnv(AbstractEnv):
     def default_config(cls) -> dict:
         cfg = super().default_config()
         cfg.update({
+            "ends": [150, 80, 80, 150],
             "collision_reward": -1,
             "right_lane_reward": 0.1,
             "high_speed_reward": 0.2,
@@ -127,25 +131,19 @@ class MergeEnv(AbstractEnv):
             return 1
         else:
             return 0
-        
+
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         obs, reward, done, info = super().step(action)
-        _rel = np.array(obs)
-        _relx = _rel[..., 1]
-        _rely = _rel[..., 2]
-        print('feature x: ')
-        pprint.pprint(_relx)
-        print('feature y: ')
-        pprint.pprint(_rely)
-        print('feature egoabscos_h: ')
-        pprint.pprint(_rel[:, 0, 5])
-        print('feature rel: ')
-        pprint.pprint(_rel)
-        obs = self.observation_type_global.observe()
-        pprint.pprint(np.array(obs))
-        obs, reward, done, info = super().step(action)
-
-
+        _obs = np.array(obs)
+        _por = self._get_portal_obs(obs)
+        
+        _obs[:, 1:, 1] = np.abs(_por[:, 1:, 1] - _obs[:, 0, 1]) # rel x: abs(por x - ego x)
+        _obs[:, 1:, 2] = np.abs(_por[:, 1:, 2] - _obs[:, 0, 2])
+        print('feature rel obs: ')
+        pprint.pprint(obs)
+        print('feature new por obs: ')
+        pprint.pprint(_obs) # use portal obs
+        obs = _obs
         for v in self.road.vehicles:
             if self._agent_is_terminal(v):
                 try:
@@ -163,21 +161,24 @@ class MergeEnv(AbstractEnv):
         #             v.target_lane_index = lane_index
         return obs, reward, done, info
 
-    # def _get_local_obs(self, obs: np.ndarray):
+    def _get_portal_obs(self, obs: np.ndarray):
     #     """
-    #     when absolute = True, this obs is global
-    #     :return: closest distance to the world edge = (x, y)
+    #     :return: replace x,y with portal obs
     #     """
-    #     dim_local_o = 2
-    #     world_size = 1
-    #     local_obs = np.zeros(dim_local_o)
-    #     wall_dists = np.array([[world_size - obs[1], world_size - obs[2]],
-    #                            [obs[1], obs[2]]])  
-    #     # wall_angles = np.array([0, np.pi / 2, np.pi, 3 / 2 * np.pi]) - obs[4]
-    #     closest_wall = np.argmin(wall_dists, axis =  1)
-    #     local_obs[0] = wall_dists[closest_wall][0]
-    #     local_obs[1] = wall_dists[closest_wall][1]
-    #     return local_obs
+        glo_obs = np.array(self.observation_type_global.observe())
+
+        min_x, max_x = 0, 2 * sum(self.config["ends"])
+        min_y, max_y = 0, 16.5 # not important in this env, real world size of the grid [[min_x, max_x], [min_y, max_y]]
+        world_size = [max_x - min_x, max_y - min_y]
+        wall_dists_x = np.minimum(world_size[0] - glo_obs[:, 1:, 1], glo_obs[:, 1:, 1])
+        wall_dists_y = np.minimum(world_size[1] - glo_obs[:, 1:, 2], glo_obs[:, 1:, 2])
+
+        glo_obs[:, 1:, 1] = np.abs(wall_dists_x) #  x
+        glo_obs[:, 1:, 2] = np.abs(wall_dists_y) #  y
+
+        por_obs = glo_obs
+        # wall_angles = np.array([0, np.pi / 2, np.pi, 3 / 2 * np.pi]) - obs[4]
+        return por_obs
 
     def _agent_is_terminal(self, vehicle):
         return vehicle.crashed or vehicle.position[0] > 900 or self.has_arrived(vehicle)
@@ -200,7 +201,7 @@ class MergeEnv(AbstractEnv):
 
         # Highway lanes
         num_highway = 2
-        ends = [150, 80, 80, 150]  # Before, converging, merge, after
+        ends = self.config["ends"]  # Before, converging, merge, after
         c, s, n = LineType.CONTINUOUS_LINE, LineType.STRIPED, LineType.NONE
         y = [0, StraightLane.DEFAULT_WIDTH]
         line_type = [[c, s], [n, c]]
@@ -228,7 +229,7 @@ class MergeEnv(AbstractEnv):
         lkkjj = StraightLane([2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4], [2*sum(ends), 6.5 + 4 + 4], line_types=[c, c], forbidden=False)
         lccbb = StraightLane([2*sum(ends)-sum(ends[:3]), 8], [2*sum(ends)-sum(ends[:2]), 8],
                             line_types=[n, c], forbidden=False)
-        
+
         lbbkk = SineLane([2*sum(ends)-sum(ends[:2]), 6.5 + 4 + 4 -amplitude], [2*sum(ends)-sum(ends[:1]), 6.5 + 4 + 4 -amplitude],
                        amplitude, 2 * np.pi / (2*ends[1]), -np.pi / 2, line_types=[c, c], forbidden=False)
 
@@ -336,5 +337,3 @@ register(
     id='merge-v0',
     entry_point='highway_env.envs:MergeEnv',
 )
-
-    
