@@ -135,15 +135,24 @@ class MergeEnv(AbstractEnv):
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         obs, reward, done, info = super().step(action)
         _obs = np.array(obs)
+        print('feature rel obs: ', np.round(_obs, decimals=0))
         _por = self._get_portal_obs(obs)
-        
-        _obs[:, 1:, 1] = np.abs(_por[:, 1:, 1] - _obs[:, 0, 1]) # rel x: abs(por x - ego x)
-        _obs[:, 1:, 2] = np.abs(_por[:, 1:, 2] - _obs[:, 0, 2])
-        print('feature rel obs: ')
-        pprint.pprint(obs)
-        print('feature new por obs: ')
-        pprint.pprint(_obs) # use portal obs
-        obs = _obs
+        print('feature por obs: ', np.round(_por, decimals=0))
+        vec_bvs = _por[:, 1:, 1:3]
+        vec_ego = np.expand_dims(_obs[:, 0, 1:3], axis = 0)
+        dist_ego_tgs = np.linalg.norm(np.squeeze(vec_bvs - vec_ego), axis = 1)
+        LngRego_bvs = np.expand_dims(dist_ego_tgs, axis = 0) * _obs[:, 1:, 5]
+        # LatRego_bvs = np.expand_dims(dist_ego_tgs, axis = 0) * _obs[:, 1:, 6] # TODO bug
+        _obs[:, 1:, 1] = LngRego_bvs
+        # _obs[:, 1:, 2] = LatRego_bvs
+        print('vec_ego: ')
+        pprint.pprint(vec_ego)
+        print('dist_ego_tgs: ')
+        pprint.pprint(dist_ego_tgs)
+        print('LngRego_bvs: ')
+        pprint.pprint(LngRego_bvs)
+        obs = _obs # replace obs with portal longitudinal relative obs
+
         for v in self.road.vehicles:
             if self._agent_is_terminal(v):
                 try:
@@ -173,8 +182,8 @@ class MergeEnv(AbstractEnv):
         wall_dists_x = np.minimum(world_size[0] - glo_obs[:, 1:, 1], glo_obs[:, 1:, 1])
         wall_dists_y = np.minimum(world_size[1] - glo_obs[:, 1:, 2], glo_obs[:, 1:, 2])
 
-        glo_obs[:, 1:, 1] = np.abs(wall_dists_x) #  x
-        glo_obs[:, 1:, 2] = np.abs(wall_dists_y) #  y
+        glo_obs[:, 1:, 1] = wall_dists_x #  x
+        glo_obs[:, 1:, 2] = wall_dists_y #  y
 
         por_obs = glo_obs
         # wall_angles = np.array([0, np.pi / 2, np.pi, 3 / 2 * np.pi]) - obs[4]
