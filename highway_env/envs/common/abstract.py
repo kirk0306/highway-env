@@ -156,16 +156,20 @@ class AbstractEnv(gym.Env):
         :param action: current action
         :return: info dict
         """
-        info = {
-            "speed": self.vehicle.speed,
-            "crashed": self.vehicle.crashed,
-            "action": action,
-        }
-        try:
-            info["cost"] = self._cost(action)
-        except NotImplementedError:
-            pass
-        return info
+        infos = []
+        for v in self.controlled_vehicles:
+            info = {
+                "speed": v.speed,
+                "crashed": v.crashed,
+                "action": action,
+                "arrived": self.has_arrived(v),
+            }
+            try:
+                info["cost"] = self._cost(action)
+            except NotImplementedError:
+                pass
+                infos.append(info)
+        return infos
 
     def _cost(self, action: Action) -> float:
         """

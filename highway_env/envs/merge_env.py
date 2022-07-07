@@ -36,9 +36,10 @@ class MergeEnv(AbstractEnv):
                     "absolute": True,
                     "flatten": False,
                     "observe_intentions": False,
-                    "normalize": False
-
-                },}}
+                    "normalize": False                
+                },
+                "controlled_vehicles": 4
+                }}
 
     def __init__(self, cfg: dict = None) -> None:
         super().__init__(cfg)
@@ -50,10 +51,12 @@ class MergeEnv(AbstractEnv):
         cfg.update({
             "ends": [150, 80, 80, 150],
             "collision_reward": -1,
+            "arrived_reward": 10,
             "right_lane_reward": 0.1,
             "high_speed_reward": 0.2,
             "merging_speed_reward": -0.5,
             "lane_change_reward": -0.05,
+            "duration": 100,
             "action": {
                 "type": "MultiAgentAction",
                 "action_config": {
@@ -78,7 +81,7 @@ class MergeEnv(AbstractEnv):
                     "normalize": False
                 },
             },
-            "controlled_vehicles": 1,
+            "controlled_vehicles": 1
         })
         return cfg
 
@@ -93,6 +96,9 @@ class MergeEnv(AbstractEnv):
         rew = []
         for v,a in zip(self.controlled_vehicles, action):
             rew.append(self.agent_reward(a, v))
+        ret = []
+        for r in rew:
+            ret.append(sum(rew))            
         return rew
 
     def agent_reward(self, action: int, cur_vehicle) -> float:
@@ -110,7 +116,7 @@ class MergeEnv(AbstractEnv):
                          3: 0,
                          4: 0}
         reward = self.config["collision_reward"] * cur_vehicle.crashed \
-            + self.has_arrived(cur_vehicle) * 5 \
+            + self.has_arrived(cur_vehicle) * self.config["arrived_reward"] \
             + self.config["right_lane_reward"] * cur_vehicle.lane_index[2] / 1 \
             + self.config["high_speed_reward"] * cur_vehicle.speed_index / (cur_vehicle.target_speeds.size - 1)
         # print(self.vehicle.lane_index)
@@ -119,8 +125,9 @@ class MergeEnv(AbstractEnv):
             reward += self.config["merging_speed_reward"] * \
                         (cur_vehicle.target_speed - cur_vehicle.speed) / cur_vehicle.target_speed
         # print(reward)
-        # return reward
-        return utils.lmap(action_reward[action] + reward,
+        reward += action_reward[action]
+        return reward
+        return utils.lmap(reward,
                           [self.config["collision_reward"] + self.config["merging_speed_reward"],
                            self.config["high_speed_reward"] + self.config["right_lane_reward"]],
                           [0, 1])
@@ -132,27 +139,8 @@ class MergeEnv(AbstractEnv):
         else:
             return 0
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
-        obs, reward, done, info = super().step(action)
-        _obs = np.array(obs)
-        print('feature rel obs: ', np.round(_obs, decimals=0))
-        _por = self._get_portal_obs(obs)
-        print('feature por obs: ', np.round(_por, decimals=0))
-        vec_bvs = _por[:, 1:, 1:3]
-        vec_ego = np.expand_dims(_obs[:, 0, 1:3], axis = 0)
-        dist_ego_tgs = np.linalg.norm(np.squeeze(vec_bvs - vec_ego), axis = 1)
-        LngRego_bvs = np.expand_dims(dist_ego_tgs, axis = 0) * _obs[:, 1:, 5]
-        # LatRego_bvs = np.expand_dims(dist_ego_tgs, axis = 0) * _obs[:, 1:, 6] # TODO bug
-        _obs[:, 1:, 1] = LngRego_bvs
-        # _obs[:, 1:, 2] = LatRego_bvs
-        print('vec_ego: ')
-        pprint.pprint(vec_ego)
-        print('dist_ego_tgs: ')
-        pprint.pprint(dist_ego_tgs)
-        print('LngRego_bvs: ')
-        pprint.pprint(LngRego_bvs)
-        obs = _obs # replace obs with portal longitudinal relative obs
-
+    def step2(self,action):
+        ret = super().step(action)
         for v in self.road.vehicles:
             if self._agent_is_terminal(v):
                 try:
@@ -168,6 +156,43 @@ class MergeEnv(AbstractEnv):
         #             v.lane = lane
         #             v.lane_index = lane_index
         #             v.target_lane_index = lane_index
+        return ret
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
+        obs, reward, done, info = super().step(action)
+        _obs = np.array(obs)
+        # print('feature rel obs: ', np.round(_obs, decimals=0))
+        _por = self._get_portal_obs(obs)
+        # print('feature por obs: ', np.round(_por, decimals=0))
+        vec_bvs = _por[:, 1:, 1:3]
+        vec_ego = np.expand_dims(_obs[:, 0, 1:3], axis = 1)
+        dist_ego_tgs = np.linalg.norm((vec_bvs - vec_ego), axis = 2)
+        LngRego_bvs = dist_ego_tgs* _obs[:, 1:, 5]
+        # LatRego_bvs = np.expand_dims(dist_ego_tgs, axis = 0) * _obs[:, 1:, 6] # TODO bug
+        _obs[:, 1:, 1] = LngRego_bvs
+        # _obs[:, 1:, 2] = LatRego_bvs
+        # print('vec_ego: ')
+        # pprint.pprint(vec_ego)
+        # print('dist_ego_tgs: ')
+        # pprint.pprint(dist_ego_tgs)
+        # print('LngRego_bvs: ')
+        # pprint.pprint(LngRego_bvs)
+        obs = _obs # replace obs with portal longitudinal relative obs
+
+        for v in self.road.vehicles:
+            if self._agent_is_terminal(v):
+                try:
+                    self.road.vehicles.remove(v)
+                except:
+                    pass
+        for v in self.road.vehicles:
+            if not v.crashed:
+                if v.position[0]>920:
+                    v.position[0] = 0
+                    lane_index = self.road.network.get_closest_lane_index(v.position)
+                    lane = self.road.network.get_lane(lane_index)
+                    v.lane = lane
+                    v.lane_index = lane_index
+                    v.target_lane_index = lane_index
         return obs, reward, done, info
 
     def _get_portal_obs(self, obs: np.ndarray):
@@ -190,11 +215,11 @@ class MergeEnv(AbstractEnv):
         return por_obs
 
     def _agent_is_terminal(self, vehicle):
-        return vehicle.crashed or vehicle.position[0] > 900 or self.has_arrived(vehicle)
+        return vehicle.crashed or self.steps >= self.config["duration"] * self.config["policy_frequency"] #or vehicle.position[0] > 900 or self.has_arrived(vehicle)
 
     def _is_terminal(self) -> bool:
         """The episode is over when a collision occurs or when the access ramp has been passed."""
-        return [vehicle.crashed or vehicle.position[0] > 900 or self.has_arrived(vehicle) for vehicle in self.controlled_vehicles]
+        return ([self._agent_is_terminal(vehicle) for vehicle in self.controlled_vehicles])
 
     def _reset(self) -> None:
         self._make_road()

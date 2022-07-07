@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 import numpy as np
 import pygame
 
-from highway_env.envs.common.action import ActionType, DiscreteMetaAction, ContinuousAction
+from highway_env.envs.common.action import ActionType, DiscreteMetaAction, ContinuousAction, MultiAgentAction
 from highway_env.road.graphics import WorldSurface, RoadGraphics
 from highway_env.vehicle.graphics import VehicleGraphics
 
@@ -173,6 +173,8 @@ class EventHandler(object):
             cls.handle_discrete_action_event(action_type, event)
         elif action_type.__class__ == ContinuousAction:
             cls.handle_continuous_action_event(action_type, event)
+        elif (isinstance(action_type, MultiAgentAction) and isinstance(action_type.agents_action_types[0], DiscreteMetaAction)):
+            cls.handle_discrete_action_event(action_type.agents_action_types[0], event)
 
     @classmethod
     def handle_discrete_action_event(cls, action_type: DiscreteMetaAction, event: pygame.event.EventType) -> None:
@@ -192,9 +194,9 @@ class EventHandler(object):
         steering_index = action_type.space().shape[0] - 1
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RIGHT and action_type.lateral:
-                action[steering_index] = 0.7
+                action[steering_index] = 0.01
             if event.key == pygame.K_LEFT and action_type.lateral:
-                action[steering_index] = -0.7
+                action[steering_index] = -0.01
             if event.key == pygame.K_DOWN and action_type.longitudinal:
                 action[0] = -0.7
             if event.key == pygame.K_UP and action_type.longitudinal:
