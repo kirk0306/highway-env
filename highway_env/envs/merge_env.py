@@ -27,18 +27,14 @@ class MergeEnv(AbstractEnv):
                     "type": "Kinematics",
                     "vehicles_count": 5,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
-                    "features_range": {
-                        "x": [-100, 100],
-                        "y": [-100, 100],
-                        "vx": [-20, 20],
-                        "vy": [-20, 20],
-                    },
+
                     "absolute": True,
                     "flatten": False,
                     "observe_intentions": False,
-                    "normalize": False                
+                    "normalize": False,
+                    "see_behind": True                
                 },
-                "controlled_vehicles": 4
+
                 }}
 
     def __init__(self, cfg: dict = None) -> None:
@@ -69,19 +65,16 @@ class MergeEnv(AbstractEnv):
                     "type": "Kinematics",
                     "vehicles_count": 5,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
-                    "features_range": {
-                        "x": [-100, 100],
-                        "y": [-100, 100],
-                        "vx": [-20, 20],
-                        "vy": [-20, 20],
-                    },
+  
                     "absolute": False,
                     "flatten": False,
                     "observe_intentions": False,
-                    "normalize": False
+                    "normalize": False,
+                    "see_behind": True
                 },
             },
-            "controlled_vehicles": 1
+            "controlled_vehicles": 2,
+            "initial_vehicle_count": 10
         })
         return cfg
 
@@ -160,20 +153,20 @@ class MergeEnv(AbstractEnv):
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         obs, reward, done, info = super().step(action)
         _obs = np.array(obs)
-        # print('feature rel obs: ', np.round(_obs, decimals=0))
+        print('feature rel obs: ', np.round(_obs, decimals=0))
         _por = self._get_portal_obs(obs)
-        # print('feature por obs: ', np.round(_por, decimals=0))
+        print('feature por obs: ', np.round(_por, decimals=0))
         vec_bvs = _por[:, 1:, 1:3]
         vec_ego = np.expand_dims(_obs[:, 0, 1:3], axis = 1)
-        dist_ego_tgs = np.linalg.norm((vec_bvs - vec_ego), axis = 2)
-        LngRego_bvs = dist_ego_tgs* _obs[:, 1:, 5]
-        # LatRego_bvs = np.expand_dims(dist_ego_tgs, axis = 0) * _obs[:, 1:, 6] # TODO bug
+        euclidean_to_neighbor = np.linalg.norm((vec_bvs - vec_ego), axis = 2)
+        LngRego_bvs = euclidean_to_neighbor* _obs[:, 1:, 5]
+        # LatRego_bvs = np.expand_dims(euclidean_to_neighbor, axis = 0) * _obs[:, 1:, 6] # TODO bug
         _obs[:, 1:, 1] = LngRego_bvs
         # _obs[:, 1:, 2] = LatRego_bvs
         # print('vec_ego: ')
         # pprint.pprint(vec_ego)
-        # print('dist_ego_tgs: ')
-        # pprint.pprint(dist_ego_tgs)
+        # print('euclidean_to_neighbor: ')
+        # pprint.pprint(euclidean_to_neighbor)
         # print('LngRego_bvs: ')
         # pprint.pprint(LngRego_bvs)
         obs = _obs # replace obs with portal longitudinal relative obs
@@ -223,7 +216,7 @@ class MergeEnv(AbstractEnv):
 
     def _reset(self) -> None:
         self._make_road()
-        self._make_vehicles(self.config['controlled_vehicles'])
+        self._make_vehicles(self.config["initial_vehicle_count"])
 
     def _make_road(self) -> None:
         """
@@ -274,7 +267,7 @@ class MergeEnv(AbstractEnv):
         road.objects.append(Obstacle(road, lbc.position(ends[2], 0)))
         self.road = road
 
-    def _make_vehicles(self, num_CAV=4, num_HDV=6) -> None:
+    def _make_vehicles(self, n_vehicles: int) -> None:
         """
         Populate a road with several vehicles on the highway and on the merging lane, as well as an ego-vehicle.
         :return: the ego-vehicle
@@ -287,6 +280,8 @@ class MergeEnv(AbstractEnv):
         spawn_points_m = [5, 45, 85, 125, 165, 205]
 
         """Spawn points for CAV"""
+        num_CAV = self.config["controlled_vehicles"]
+        num_HDV = n_vehicles - num_CAV
         # spawn point indexes on the straight road
         spawn_point_s_c = np.random.choice(spawn_points_s, num_CAV // 2, replace=False)
         # spawn point indexes on the merging road
