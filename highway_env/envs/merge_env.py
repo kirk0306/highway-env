@@ -37,6 +37,14 @@ class MergeEnv(AbstractEnv):
 
                 }}
 
+    TTC_OBS =  {"observation": {"type": "MultiAgentObservation",
+                "observation_config": {
+                    "type": "TimeToCollision",
+                    "horizon": 7            
+                },
+
+                }}
+
     def __init__(self, cfg: dict = None) -> None:
         super().__init__(cfg)
         self.observation_type_global = None
@@ -53,6 +61,7 @@ class MergeEnv(AbstractEnv):
             "merging_speed_reward": -0.5,
             "lane_change_reward": -0.05,
             "duration": 100,
+            "policy_frequency": 1,
             "action": {
                 "type": "MultiAgentAction",
                 "action_config": {
@@ -62,15 +71,8 @@ class MergeEnv(AbstractEnv):
                 }},
             "observation": { "type": "MultiAgentObservation",
                 "observation_config": {
-                    "type": "Kinematics",
-                    "vehicles_count": 5,
-                    "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
-  
-                    "absolute": False,
-                    "flatten": False,
-                    "observe_intentions": False,
-                    "normalize": False,
-                    "see_behind": True
+                    "type": "TimeToCollision",
+                    "horizon": 7
                 },
             },
             "controlled_vehicles": 2,
@@ -84,6 +86,7 @@ class MergeEnv(AbstractEnv):
         """
         super().define_spaces()
         self.observation_type_global = observation_factory(self, self.GLO_OBS["observation"])
+        self.observation_type_timetocollision = observation_factory(self, self.TTC_OBS["observation"])
 
     def _reward(self, action: int) -> float:
         rew = []
@@ -117,6 +120,7 @@ class MergeEnv(AbstractEnv):
         if cur_vehicle.lane_index == ("b", "c", 2):
             reward += self.config["merging_speed_reward"] * \
                         (cur_vehicle.target_speed - cur_vehicle.speed) / cur_vehicle.target_speed
+        # print("next move: ",cur_vehicle.predict_trajectory_constant_speed(np.arange(5, 7, 1)))
         # print(reward)
         reward += action_reward[action]
         return reward
@@ -153,23 +157,18 @@ class MergeEnv(AbstractEnv):
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         obs, reward, done, info = super().step(action)
         _obs = np.array(obs)
-        print('feature rel obs: ', np.round(_obs, decimals=0))
-        _por = self._get_portal_obs(obs)
-        print('feature por obs: ', np.round(_por, decimals=0))
-        vec_bvs = _por[:, 1:, 1:3]
-        vec_ego = np.expand_dims(_obs[:, 0, 1:3], axis = 1)
-        euclidean_to_neighbor = np.linalg.norm((vec_bvs - vec_ego), axis = 2)
-        LngRego_bvs = euclidean_to_neighbor* _obs[:, 1:, 5]
+        print('feature rel obs: ', np.round(_obs, decimals=0), _obs.shape)
+        # _por = self._get_portal_obs(obs)
+        # print('feature por obs: ', np.round(_por, decimals=0))
+        # _ttc = np.squeeze(self._get_ttc_obs(obs), axis=1)
+        # print('feature ttc obs: ', _ttc, _ttc.shape)
+        # vec_bvs = _por[:, 1:, 1:3]
+        # vec_ego = np.expand_dims(_obs[:, 0, 1:3], axis = 1)
+        # euclidean_to_neighbor = np.linalg.norm((vec_bvs - vec_ego), axis = 2)
+        # LngRego_bvs = euclidean_to_neighbor* _obs[:, 1:, 5]
         # LatRego_bvs = np.expand_dims(euclidean_to_neighbor, axis = 0) * _obs[:, 1:, 6] # TODO bug
-        _obs[:, 1:, 1] = LngRego_bvs
-        # _obs[:, 1:, 2] = LatRego_bvs
-        # print('vec_ego: ')
-        # pprint.pprint(vec_ego)
-        # print('euclidean_to_neighbor: ')
-        # pprint.pprint(euclidean_to_neighbor)
-        # print('LngRego_bvs: ')
-        # pprint.pprint(LngRego_bvs)
-        obs = _obs # replace obs with portal longitudinal relative obs
+        # _obs[:, 1:, 1] = LngRego_bvs
+        # obs = _ttc # replace obs with portal longitudinal relative obs
 
         for v in self.road.vehicles:
             if self._agent_is_terminal(v):
@@ -206,6 +205,11 @@ class MergeEnv(AbstractEnv):
         por_obs = glo_obs
         # wall_angles = np.array([0, np.pi / 2, np.pi, 3 / 2 * np.pi]) - obs[4]
         return por_obs
+
+    def _get_ttc_obs(self, obs: np.ndarray):
+
+        ttc_obs = np.array(self.observation_type_timetocollision.observe())
+        return ttc_obs    
 
     def _agent_is_terminal(self, vehicle):
         return vehicle.crashed or self.steps >= self.config["duration"] * self.config["policy_frequency"] #or vehicle.position[0] > 900 or self.has_arrived(vehicle)

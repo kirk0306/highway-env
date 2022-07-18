@@ -95,7 +95,7 @@ def compute_ttc_grid(env: 'AbstractEnv',
     :return: the time-co-collision grid, with axes SPEED x LANES x TIME
     """
     vehicle = vehicle or env.vehicle
-    road_lanes = env.road.network.all_side_lanes(env.vehicle.lane_index)
+    road_lanes = env.road.network.all_side_lanes(vehicle.lane_index)
     grid = np.zeros((vehicle.target_speeds.size, len(road_lanes), int(horizon / time_quantization)))
     for speed_index in range(grid.shape[0]):
         ego_speed = vehicle.index_to_speed(speed_index)
