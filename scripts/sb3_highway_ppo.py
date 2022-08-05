@@ -19,7 +19,7 @@ import time
 if __name__ == "__main__":
     train = True
     if train:
-        n_cpu = 6
+        n_cpu = 32
         batch_size = 64
         env = make_vec_env("merge-v0", n_envs=n_cpu, vec_env_cls=SubprocVecEnv)
         model = PPO("MlpPolicy",
@@ -31,17 +31,17 @@ if __name__ == "__main__":
                     learning_rate=5e-4,
                     gamma=0.8,
                     verbose=2,
-                    tensorboard_log="/content/drive/MyDrive/researchHub/highway-env/highway_ppo/")
+                    tensorboard_log="highway_ppo/")
         # Train the agent
         # model_loaded = PPO.load("/content/drive/MyDrive/researchHub/highway-env/highway_ppo/model")
         # model.set_parameters(model_loaded.get_parameters())
-        model.learn(total_timesteps=int(2e4))
+        model.learn(total_timesteps=int(3e6))
         # Save the agent
-        model.save("/content/drive/MyDrive/researchHub/highway-env/highway_ppo/model")
+        model.save("highway_ppo/model")
 
-    model = PPO.load("/content/drive/MyDrive/researchHub/highway-env/highway_ppo/model", device="cpu")
+    model = PPO.load("scripts/highway_ppo/model", device="cpu")
     env = gym.make("merge-v0")
-    env.configure({"offscreen_rendering": True})
+    env.configure({"offscreen_rendering": False})
     img = env.render(mode='rgb_array')
     while True:
         obs = env.reset()
@@ -50,5 +50,8 @@ if __name__ == "__main__":
             action, _ = model.predict(obs)
             # obs, reward, done, info = env.step(np.array([0,0],dtype=np.float32))
             obs, reward, done, info = env.step(tuple([a for a in action]))
+            print(obs)
+            print(done)
             env.render()
             time.sleep(0.3)
+        env.close()

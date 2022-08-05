@@ -21,7 +21,8 @@ class RoadObject(ABC):
 
     LENGTH: float = 2  # Object length [m]
     WIDTH: float = 2  # Object width [m]
-
+    WORLDEDGE_X: list = [150, 80, 80, 150]
+    WORLDEDGE_Y: list = [16.5]
     def __init__(self, road: 'Road', position: Sequence[float], heading: float = 0, speed: float = 0):
         """
         :param road: the road instance where the object is placed in
@@ -161,6 +162,12 @@ class RoadObject(ABC):
             return np.nan
         if not lane:
             lane = self.lane
+        # min_x, max_x = 0, 2 * sum(self.WORLDEDGE_X)
+        # min_y, max_y = 0, sum(self.WORLDEDGE_Y)
+        # world_size = [max_x - min_x, max_y - min_y]
+        # lanedistanceto = min(lane.local_coordinates(other.position)[0] - lane.local_coordinates(self.position)[0], 
+        #                      world_size[0] - (lane.local_coordinates(other.position)[0] - lane.local_coordinates(self.position)[0]))
+
         return lane.local_coordinates(other.position)[0] - lane.local_coordinates(self.position)[0]
 
     @property

@@ -99,7 +99,7 @@ def compute_ttc_grid(env: 'AbstractEnv',
     grid = np.zeros((vehicle.target_speeds.size, len(road_lanes), int(horizon / time_quantization)))
     for speed_index in range(grid.shape[0]):
         ego_speed = vehicle.index_to_speed(speed_index)
-        for other in env.road.vehicles:
+        for other in env.road.vehicles + env.road.objects:
             if (other is vehicle) or (ego_speed == other.speed):
                 continue
             margin = other.LENGTH / 2 + vehicle.LENGTH / 2
