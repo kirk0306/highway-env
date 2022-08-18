@@ -17,7 +17,7 @@ import time
 # ==================================
 
 if __name__ == "__main__":
-    train = True
+    train = False
     if train:
         n_cpu = 32
         batch_size = 64
@@ -35,7 +35,7 @@ if __name__ == "__main__":
         # Train the agent
         # model_loaded = PPO.load("/content/drive/MyDrive/researchHub/highway-env/highway_ppo/model")
         # model.set_parameters(model_loaded.get_parameters())
-        model.learn(total_timesteps=int(3e6))
+        model.learn(total_timesteps=int(6e5))
         # Save the agent
         model.save("highway_ppo/model")
 
@@ -53,5 +53,5 @@ if __name__ == "__main__":
             print(obs)
             print(done)
             env.render()
-            time.sleep(0.3)
+            time.sleep(0.15)
         env.close()

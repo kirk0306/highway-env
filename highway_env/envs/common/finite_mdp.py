@@ -105,7 +105,7 @@ def compute_ttc_grid(env: 'AbstractEnv',
             margin = other.LENGTH / 2 + vehicle.LENGTH / 2
             collision_points = [(0, 1), (-margin, 0.5), (margin, 0.5)]
             for m, cost in collision_points:
-                distance = vehicle.lane_distance_to(other) + m
+                distance = vehicle.torus_distance_to(other) + m
                 other_projected_speed = other.speed * np.dot(other.direction, vehicle.direction)
                 time_to_collision = distance / utils.not_zero(ego_speed - other_projected_speed)
                 if time_to_collision < 0:

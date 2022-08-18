@@ -162,13 +162,32 @@ class RoadObject(ABC):
             return np.nan
         if not lane:
             lane = self.lane
-        # min_x, max_x = 0, 2 * sum(self.WORLDEDGE_X)
-        # min_y, max_y = 0, sum(self.WORLDEDGE_Y)
-        # world_size = [max_x - min_x, max_y - min_y]
-        # lanedistanceto = min(lane.local_coordinates(other.position)[0] - lane.local_coordinates(self.position)[0], 
-        #                      world_size[0] - (lane.local_coordinates(other.position)[0] - lane.local_coordinates(self.position)[0]))
 
         return lane.local_coordinates(other.position)[0] - lane.local_coordinates(self.position)[0]
+
+    def torus_distance_to(self, other: 'RoadObject', lane: 'AbstractLane' = None) -> float:
+        """
+        Compute the signed distance to another object along a torus.
+
+        :param other: the other object
+        :param lane: a lane
+        :return: the distance to the other other [m]
+        """
+        if not other:
+            return np.nan
+        if not lane:
+            lane = self.lane
+        min_x, max_x = 0, 2 * sum(self.WORLDEDGE_X)
+        min_y, max_y = 0, sum(self.WORLDEDGE_Y)
+        world_size = [max_x - min_x, max_y - min_y]
+        otherclosetowall = [min(world_size[0] - other.position[0], other.position[0]), other.position[1]]
+                            # min(world_size[1] - other.position[1], other.position[1])]
+        selfclosetowall = [min(world_size[0] - self.position[0], self.position[0]), self.position[1]]
+                            # min(world_size[1] - self.position[1], self.position[1])]
+        torusdistance = np.linalg.norm(otherclosetowall + selfclosetowall)
+        torus = min(np.linalg.norm(other.position - self.position), torusdistance)
+
+        return torus
 
     @property
     def on_road(self) -> bool:

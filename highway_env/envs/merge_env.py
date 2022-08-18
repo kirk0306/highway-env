@@ -5,8 +5,10 @@ from gym.envs.registration import register
 
 from highway_env import utils
 from highway_env.envs.common.abstract import AbstractEnv
+from highway_env.envs.common.action import Action
 from highway_env.envs.common.observation import MultiAgentObservation, observation_factory
 from highway_env.road.lane import LineType, StraightLane, SineLane
+from highway_env.road.regulation import RegulatedRoad
 from highway_env.road.road import Road, RoadNetwork
 from highway_env.vehicle.controller import ControlledVehicle
 from highway_env.vehicle.objects import Obstacle
@@ -25,7 +27,7 @@ class MergeEnv(AbstractEnv):
     GLO_OBS =  {"observation": {"type": "MultiAgentObservation",
                 "observation_config": {
                     "type": "Kinematics",
-                    "vehicles_count": 5,
+                    "vehicles_count": 2,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
 
                     "absolute": True,
@@ -54,25 +56,27 @@ class MergeEnv(AbstractEnv):
         cfg = super().default_config()
         cfg.update({
             "ends": [150, 80, 80, 150],
-            "collision_reward": -1,
-            "arrived_reward": 10,
+            "collision_reward": -10,
+            "arrived_reward": 1,
             "right_lane_reward": 0.1,
-            "high_speed_reward": 0,
-            "merging_speed_reward": -0.1,
+            "high_speed_reward": 0.1,
+            # "merging_speed_reward": -0.1,
             "lane_change_reward": -0.1,
-            "duration": 100,
+            "reward_speed_range": [20, 30],
+            "duration": 1000,
             "policy_frequency": 1,
             "action": {
                 "type": "MultiAgentAction",
                 "action_config": {
                     "type": "DiscreteMetaAction",
                     "lateral": True,
-                    "longitudinal": True
+                    "longitudinal": True,
+                    "target_speeds": [10, 30, 9]
                 }},
             "observation": { "type": "MultiAgentObservation",
                 "observation_config": {
                     "type": "TimeToCollision",
-                    "horizon": 15
+                    "horizon": 10
                 },
             },
             "controlled_vehicles": 1,
@@ -97,7 +101,32 @@ class MergeEnv(AbstractEnv):
             ret.append(sum(rew))            
         return rew
 
-    def agent_reward(self, action: int, cur_vehicle) -> float:
+    def _rewards(self, action: Action, cur_vehicle) -> dict:
+        """
+        In MORL, we consider multiple rewards like collision, right-keeping, and speed,
+        and the utility of these separate rewards is not always known a priori.
+        This function returns a dict of multiple reward criteria
+
+        :param action: the last action performed
+        :return: the reward vector
+        """
+        rewards = {}
+
+        rewards["collision"] = cur_vehicle.crashed
+
+        neighbours = self.road.network.all_side_lanes(cur_vehicle.lane_index)
+        lane = cur_vehicle.target_lane_index[2] if isinstance(cur_vehicle, ControlledVehicle) \
+            else cur_vehicle.lane_index[2]
+        rewards["right_lane"] = lane / max(len(neighbours) - 1, 1)
+
+        # Use forward speed rather than speed, see https://github.com/eleurent/highway-env/issues/268
+        forward_speed = cur_vehicle.speed * np.cos(cur_vehicle.heading)
+        scaled_speed = utils.lmap(forward_speed, self.config["reward_speed_range"], [0, 1])
+        rewards["high_speed"] = np.clip(scaled_speed, 0, 1)
+
+        return rewards
+
+    def agent_reward(self, action: Action, cur_vehicle) -> float:
         """
         The vehicle is rewarded for driving with high speed on lanes to the right and avoiding collisions
 
@@ -106,40 +135,25 @@ class MergeEnv(AbstractEnv):
         :param action: the action performed
         :return: the reward of the state-action transition
         """
-        action_reward = {0: self.config["lane_change_reward"],
-                         1: 0,
-                         2: self.config["lane_change_reward"],
-                         3: 0,
-                         4: 0}
-        reward = self.config["collision_reward"] * cur_vehicle.crashed \
+        # action_reward = {0: self.config["lane_change_reward"],
+        #                  1: 0,
+        #                  2: self.config["lane_change_reward"],
+        #                  3: 0,
+        #                  4: 0}
+
+        rewards = self._rewards(action, cur_vehicle)
+        reward = \
+            + self.config["collision_reward"] * rewards["collision"] \
             + self.has_arrived(cur_vehicle) * self.config["arrived_reward"] \
-            + self.config["right_lane_reward"] * cur_vehicle.lane_index[2] / 1 \
-            + self.config["high_speed_reward"] * cur_vehicle.speed_index / (cur_vehicle.target_speeds.size - 1)
-        # print(self.vehicle.lane_index)
+            + self.config["right_lane_reward"] * rewards["right_lane"] \
+            + self.config["high_speed_reward"] * rewards["high_speed"]
+
         # Altruistic penalty
-        if cur_vehicle.lane_index == ("b", "c", 2):
-            reward += self.config["merging_speed_reward"] * \
-                        (cur_vehicle.target_speed - cur_vehicle.speed) / cur_vehicle.target_speed
+        # if cur_vehicle.lane_index == ("b", "c", 2):
+        #     reward += self.config["merging_speed_reward"] * \
+        #                 (cur_vehicle.target_speed - cur_vehicle.speed) / cur_vehicle.target_speed
         # print("next move: ",cur_vehicle.predict_trajectory_constant_speed(np.arange(5, 7, 1)))
         # print(reward)
-        reward += action_reward[action]
-        return reward
-        return utils.lmap(reward,
-                          [self.config["collision_reward"] + self.config["merging_speed_reward"],
-                           self.config["high_speed_reward"] + self.config["right_lane_reward"]],
-                          [0, 1])
-
-    def _agent_reward(self, action: int, cur_vehicle) -> float:
-        neighbours = self.road.network.all_side_lanes(cur_vehicle.lane_index)
-        lane = cur_vehicle.target_lane_index[2] if isinstance(cur_vehicle, ControlledVehicle) \
-            else cur_vehicle.lane_index[2]
-        # Use forward speed rather than speed, see https://github.com/eleurent/highway-env/issues/268
-        forward_speed = cur_vehicle.speed * np.cos(cur_vehicle.heading)
-        scaled_speed = utils.lmap(forward_speed, self.config["reward_speed_range"], [0, 1])
-        reward = \
-            + self.config["collision_reward"] * cur_vehicle.crashed \
-            + self.config["right_lane_reward"] * lane / max(len(neighbours) - 1, 1) \
-            + self.config["high_speed_reward"] * np.clip(scaled_speed, 0, 1)
         reward = utils.lmap(reward,
                           [self.config["collision_reward"],
                            self.config["high_speed_reward"] + self.config["right_lane_reward"]],
@@ -306,6 +320,7 @@ class MergeEnv(AbstractEnv):
         net.add_lane("cc", "bb", lccbb)
         road = Road(network=net, np_random=self.np_random, record_history=self.config["show_trajectories"])
         road.objects.append(Obstacle(road, lbc.position(ends[2], 0)))
+        RegulatedRoad(network=net, np_random=self.np_random, record_history=self.config["show_trajectories"])
         self.road = road
 
     def _make_vehicles(self, n_vehicles: int) -> None:
